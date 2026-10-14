@@ -21,18 +21,21 @@ tf.random.set_seed(seed)
 random.seed(seed)
 
 # Cấu hình trang Streamlit
-st.set_page_config(page_title="Dự báo Giá Cổ phiếu", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dự Báo Giá Cổ Phiếu bằng LSTM", page_icon="📈", layout="wide")
 
-st.title("📈 Ứng dụng Dự báo Giá Cổ phiếu 10 Ngày Tới (LSTM)")
-st.write("Nhập mã cổ phiếu bên thanh công cụ để huấn luyện mô hình và xem kết quả dự báo.")
+st.title("📈 Ứng Dụng Dự Báo Giá Cổ Phiếu bằng Mô Hình LSTM")
+st.write("Dự báo xu hướng giá cổ phiếu trong ngắn hạn và tính toán phần trăm *Lãi / Lỗ* kỳ vọng.")
 
 # --- THANH CẤU HÌNH (SIDEBAR) ---
-st.sidebar.header("⚙️ Cấu hình dữ liệu")
-ticker_input = st.sidebar.text_input("Nhập mã cổ phiếu:", value="VNM")
+st.sidebar.header("⚙️ Cấu Hình Dự Báo")
+ticker_input = st.sidebar.text_input("Mã chứng khoán:", value="VNM")
 start_date = st.sidebar.date_input("Ngày bắt đầu lấy dữ liệu:", datetime.date(2018, 1, 1))
 end_date = st.sidebar.date_input("Ngày kết thúc:", datetime.date.today())
 
-btn_predict = st.sidebar.button("🚀 Bắt đầu Dự báo", type="primary")
+n_days = st.sidebar.slider("Số ngày muốn dự báo tương lai:", min_value=1, max_value=30, value=10)
+epochs = st.sidebar.slider("Số Epochs huấn luyện:", min_value=5, max_value=30, value=10)
+
+btn_predict = st.sidebar.button("🚀 Bắt Đầu Dự Báo", type="primary")
 
 # Tự động thêm đuôi .VN nếu nhập mã Việt Nam (3 ký tự)
 ticker = ticker_input.strip().upper()
@@ -53,7 +56,7 @@ if btn_predict:
             else:
                 data = df[['Close']].values
                 
-            st.success(f"✅ Đã tải thành công {len(data)} phiên giao dịch của **{ticker}**.")
+            st.success(f"Đã tải thành công **{len(data)}** phiên giao dịch của **{ticker}**!")
 
             # 2. Chia tập Train (80%) / Test (20%) & Chuẩn hóa dữ liệu
             train_size = int(0.8 * len(data))
@@ -103,7 +106,7 @@ if btn_predict:
             history = model.fit(
                 X_train_final, y_train_final,
                 validation_data=(X_val, y_val),
-                epochs=10,
+                epochs=epochs,
                 batch_size=32,
                 shuffle=False,
                 callbacks=[early_stop],
@@ -119,12 +122,12 @@ if btn_predict:
             mae = mean_absolute_error(y_test_real, test_pred)
             r2 = r2_score(y_test_real, test_pred)
 
-            # 5. Dự báo 10 ngày tiếp theo (Cuốn chiếu)
+            # 5. Dự báo n ngày tiếp theo (Cuốn chiếu)
             last_60_days = np.vstack((train_scaled, test_scaled))[-60:]
             last_60_days = last_60_days.reshape(1, 60, 1)
 
             future_predictions = []
-            for i in range(10):
+            for i in range(n_days):
                 next_pred = model.predict(last_60_days, verbose=0)
                 future_predictions.append(next_pred[0, 0])
                 last_60_days = np.append(
@@ -136,71 +139,110 @@ if btn_predict:
             future_predictions = np.array(future_predictions).reshape(-1, 1)
             future_predictions = scaler.inverse_transform(future_predictions)
 
-            # Tạo ngày làm việc (tránh ngày cuối tuần) cho 10 ngày dự báo
+            # Ngày làm việc cho n ngày dự báo
             last_date = df.index[-1]
-            future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=10)
+            future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=n_days)
+
+            # Tính toán các chỉ số tóm tắt Lãi / Lỗ
+            last_real_price = float(data[-1][0])
+            final_pred_price = float(future_predictions[-1][0])
+            diff_price = final_pred_price - last_real_price
+            pct_change = (diff_price / last_real_price) * 100
 
             # --- HIỂN THỊ KẾT QUẢ TRÊN GIAO DIỆN ---
             
-            # Khối 1: Các chỉ số đánh giá mô hình
+            # KHỐI 1: TÓM TẮT LÃI / LỖ
             st.markdown("---")
-            st.subheader("📊 Chỉ số đánh giá độ chính xác (Tập Test)")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("RMSE (Sai số căn bình phương)", f"{rmse:,.2f}")
-            c2.metric("MAE (Sai số tuyệt đối trung bình)", f"{mae:,.2f}")
-            c3.metric("R² Score (Độ tương quan)", f"{r2:.4f}")
+            st.subheader("🎯 Tóm Tắt Dự Báo Lãi / Lỗ")
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Giá đóng cửa gần nhất", f"{last_real_price:,.2f}")
+            m2.metric(f"Giá dự báo ngày thứ {n_days}", f"{final_pred_price:,.2f}")
+            m3.metric("Mức chênh lệch", f"{diff_price:+,.2f}")
+            m4.metric("Dự báo % Lãi / Lỗ", f"{pct_change:+.2f}%", delta=f"{pct_change:+.2f}%")
 
-            # Khối 2: Bảng giá dự báo 10 ngày tới
+            # KHỐI 2: BẢNG DỰ BÁO CHI TIẾT
             st.markdown("---")
-            st.subheader(f"🔮 Bảng giá dự báo 10 phiên tới cho {ticker}")
+            st.subheader(f"📋 Bảng Dự Báo Giá {n_days} Ngày Tới")
             
             df_future = pd.DataFrame({
-                "Ngày phiên giao dịch": [d.strftime('%d/%m/%Y') for d in future_dates],
-                "Giá dự báo": future_predictions.flatten()
+                "Ngày dự báo": [d.strftime('%d/%m/%Y') for d in future_dates],
+                "Giá dự báo": future_predictions.flatten(),
+                "% Thay đổi so với giá gần nhất": [
+                    f"{((p - last_real_price) / last_real_price * 100):+.2f}%" for p in future_predictions.flatten()
+                ]
             })
             
-            # Format tiền tệ dễ nhìn
             st.dataframe(
                 df_future.style.format({"Giá dự báo": "{:,.2f}"}),
                 use_container_width=True
             )
 
-            # Khối 3: Biểu đồ tương tác Plotly
+            # KHỐI 3: BIỂU ĐỒ TRỰC QUAN HÓA (TABS)
             st.markdown("---")
-            st.subheader("📈 Biểu đồ Giá Thực tế & Dự báo")
+            st.subheader("📊 Biểu Đồ Trực Quan Hóa")
             
-            fig = go.Figure()
+            tab1, tab2 = st.tabs(["Biểu đồ Tương tác (Plotly)", "Hàm Mất Mát (Train vs Val Loss)"])
 
-            # Đường giá thực tế tập test
-            test_dates = df.index[train_size:]
-            fig.add_trace(go.Scatter(
-                x=test_dates, y=y_test_real.flatten(),
-                mode='lines', name='Giá thực tế (Test)',
-                line=dict(color='#1f77b4', width=2)
-            ))
+            with tab1:
+                fig = go.Figure()
 
-            # Đường dự báo tập test
-            fig.add_trace(go.Scatter(
-                x=test_dates, y=test_pred.flatten(),
-                mode='lines', name='Dự báo tập Test',
-                line=dict(color='#ff7f0e', width=1.5, dash='dash')
-            ))
+                # Đường giá thực tế tập test
+                test_dates = df.index[train_size:]
+                fig.add_trace(go.Scatter(
+                    x=test_dates, y=y_test_real.flatten(),
+                    mode='lines', name='Giá thực tế (Test set)',
+                    line=dict(color='#1f77b4', width=2)
+                ))
 
-            # Đường 10 ngày tới
-            fig.add_trace(go.Scatter(
-                x=future_dates, y=future_predictions.flatten(),
-                mode='lines+markers', name='Dự báo 10 ngày tới',
-                line=dict(color='#2ca02c', width=3),
-                marker=dict(size=8)
-            ))
+                # Đường dự báo tập test
+                fig.add_trace(go.Scatter(
+                    x=test_dates, y=test_pred.flatten(),
+                    mode='lines', name='Dự báo (Test set)',
+                    line=dict(color='#ff7f0e', width=1.5, dash='dash')
+                ))
 
-            fig.update_layout(
-                title=f"Biểu đồ dự báo giá cổ phiếu {ticker}",
-                xaxis_title="Thời gian",
-                yaxis_title="Giá đóng cửa",
-                hovermode="x unified",
-                template="plotly_white",
-                height=550
-            )
+                # Đường n ngày tới
+                fig.add_trace(go.Scatter(
+                    x=future_dates, y=future_predictions.flatten(),
+                    mode='lines+markers', name=f'Dự báo {n_days} ngày tới',
+                    line=dict(color='#2ca02c', width=3),
+                    marker=dict(size=8)
+                ))
 
-            st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(
+                    title=f"So sánh Giá Thực tế vs Dự báo & {n_days} Ngày Tới của mã {ticker}",
+                    xaxis_title="Thời gian / Chỉ số phiên",
+                    yaxis_title="Giá cổ phiếu",
+                    hovermode="x unified",
+                    template="plotly_white",
+                    height=500
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab2:
+                fig_loss = go.Figure()
+                fig_loss.add_trace(go.Scatter(
+                    y=history.history['loss'], mode='lines+markers', name='Train Loss',
+                    line=dict(color='#1f77b4', width=2)
+                ))
+                fig_loss.add_trace(go.Scatter(
+                    y=history.history['val_loss'], mode='lines+markers', name='Validation Loss',
+                    line=dict(color='#d62728', width=2)
+                ))
+                fig_loss.update_layout(
+                    title="Đường cong Hàm Mất Mát qua các Epochs",
+                    xaxis_title="Epoch",
+                    yaxis_title="Loss (Mean Squared Error)",
+                    template="plotly_white",
+                    height=500
+                )
+                st.plotly_chart(fig_loss, use_container_width=True)
+
+            # KHỐI 4: CHỈ SỐ ĐÁNH GIÁ MÔ HÌNH
+            st.markdown("---")
+            st.subheader("📐 Chỉ Số Đánh Giá Mô Hình (Model Metrics)")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("RMSE (Root Mean Squared Error)", f"{rmse:,.4f}")
+            c2.metric("MAE (Mean Absolute Error)", f"{mae:,.4f}")
+            c3.metric("R² Score", f"{r2:.4f}")
